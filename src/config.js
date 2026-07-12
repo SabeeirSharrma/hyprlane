@@ -1,4 +1,7 @@
-import 'dotenv/config';
+import { config as loadEnv } from 'dotenv';
+import path from 'path';
+
+loadEnv({ path: path.join(import.meta.dirname, '.env') });
 
 export const config = {
   token: process.env.DISCORD_BOT_TOKEN,
