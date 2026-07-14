@@ -48,4 +48,10 @@ export const api = {
 
   getGuildStats: (guildId) =>
     request('GET', `/guilds/${guildId}/stats`),
+
+  pollRoleAssignments: (guildId) =>
+    request('POST', `/guilds/${guildId}/role-assignments/poll`),
+
+  confirmRoleAssignments: (guildId, discordIds) =>
+    request('POST', `/guilds/${guildId}/role-assignments/confirm`, { discord_ids: discordIds }),
 };
