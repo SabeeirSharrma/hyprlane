@@ -1,5 +1,5 @@
 import { SlashCommandBuilder } from 'discord.js';
-import { api } from '../api.js';
+import { config } from '../config.js';
 
 export const data = new SlashCommandBuilder()
   .setName('hlid')
@@ -8,26 +8,28 @@ export const data = new SlashCommandBuilder()
 export async function execute(interaction) {
   await interaction.deferReply();
 
-  const card = await api.getUserHlidCard(interaction.user.id);
+  const baseUrl = config.api.baseUrl;
+  const cardUrl = `${baseUrl}/users/${interaction.user.id}/hlid-card`;
 
-  if (card.image_url) {
-    return interaction.editReply({
-      embeds: [{
-        image: { url: card.image_url },
-        color: 0xf59e0b,
-      }],
+  try {
+    const res = await fetch(cardUrl, {
+      headers: { Authorization: `Bearer ${config.api.secret}` },
     });
-  }
 
-  return interaction.editReply({
-    embeds: [{
-      title: 'Hyprlane ID',
-      fields: [
-        { name: 'User', value: `<@${interaction.user.id}>`, inline: true },
-        { name: 'Verified', value: card.verified_at ? `Yes — <t:${Math.floor(new Date(card.verified_at).getTime() / 1000)}:R>` : 'No', inline: true },
-        { name: 'Servers', value: String(card.verified_guild_count ?? 0), inline: true },
-      ],
-      color: 0xf59e0b,
-    }],
-  });
+    if (!res.ok) {
+      return interaction.editReply({ content: 'Failed to generate ID card.' });
+    }
+
+    const buffer = Buffer.from(await res.arrayBuffer());
+    const attachment = {
+      attachment: buffer,
+      name: 'hlid-card.png',
+    };
+
+    return interaction.editReply({
+      files: [attachment],
+    });
+  } catch (err) {
+    return interaction.editReply({ content: 'Failed to generate ID card.' });
+  }
 }
