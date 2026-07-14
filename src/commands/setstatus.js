@@ -13,7 +13,8 @@ export const data = new SlashCommandBuilder()
       .setDescription('New status (omit to just check)')
       .addChoices(
         { name: 'verified', value: 'verified' },
-        { name: 'unverified', value: 'unverified' }
+        { name: 'unverified', value: 'unverified' },
+        { name: 'pending_mod_review', value: 'pending_mod_review' }
       )
   )
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild);

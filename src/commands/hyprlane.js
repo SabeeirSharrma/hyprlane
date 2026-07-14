@@ -44,23 +44,29 @@ export const data = new SlashCommandBuilder()
       .addStringOption(opt =>
         opt
           .setName('action')
-          .setDescription('enable or disable')
+          .setDescription('enable, disable, or config')
           .setRequired(true)
           .addChoices(
             { name: 'enable', value: 'enable' },
-            { name: 'disable', value: 'disable' }
+            { name: 'disable', value: 'disable' },
+            { name: 'config', value: 'config' }
           )
       )
       .addStringOption(opt =>
         opt
           .setName('feature_id')
-          .setDescription('Feature to toggle')
+          .setDescription('Feature to manage')
           .setRequired(true)
           .addChoices(
             { name: 'require_challenge', value: 'require_challenge' },
             { name: 'phone_required', value: 'phone_required' },
             { name: 'mod_review', value: 'mod_review' }
           )
+      )
+      .addChannelOption(opt =>
+        opt
+          .setName('channel')
+          .setDescription('Channel (for mod_review config)')
       )
   );
 
@@ -99,7 +105,6 @@ export async function execute(interaction) {
           { name: 'Log Channel', value: config.log_channel_id ? `<#${config.log_channel_id}>` : 'None', inline: true },
           { name: 'Enrolled Features', value: (config.enrolled_features || []).join(', ') || 'None', inline: true },
           { name: 'Total Verified', value: String(stats.verified_count ?? 0), inline: true },
-          { name: 'Recent Joins', value: String(stats.recent_joins ?? 0), inline: true },
         ],
         color: 0xf59e0b,
       }],
@@ -139,6 +144,29 @@ export async function execute(interaction) {
     const action = interaction.options.getString('action');
     const featureId = interaction.options.getString('feature_id');
     const config = await api.getGuildConfig(guildId);
+
+    if (action === 'config') {
+      if (featureId !== 'mod_review') {
+        return interaction.reply({ content: 'Config is only available for `mod_review`.', ephemeral: true });
+      }
+
+      const channel = interaction.options.getChannel('channel');
+      if (!channel) {
+        return interaction.reply({ content: 'Please provide a channel for mod review.', ephemeral: true });
+      }
+
+      const featureConfig = config.feature_config || {};
+      featureConfig.mod_review = { channel_id: channel.id };
+
+      await api.updateGuildConfig(guildId, { feature_config: featureConfig });
+
+      return interaction.reply({
+        content: `Mod review channel set to <#${channel.id}>.`,
+        ephemeral: true,
+      });
+    }
+
+    // enable / disable
     const features = new Set(config.enrolled_features || []);
 
     if (action === 'enable') features.add(featureId);
