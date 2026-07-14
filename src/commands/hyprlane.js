@@ -67,7 +67,6 @@ export const data = new SlashCommandBuilder()
           .setRequired(true)
           .addChoices(
             { name: 'require_challenge', value: 'require_challenge' },
-            { name: 'phone_required', value: 'phone_required' },
             { name: 'mod_review', value: 'mod_review' }
           )
       )

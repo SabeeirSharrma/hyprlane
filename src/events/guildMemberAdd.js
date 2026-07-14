@@ -66,27 +66,6 @@ export async function execute(member) {
         return;
       }
 
-      // phone_required: prompt to link phone
-      if (features.includes('phone_required') && !status.phone_linked) {
-        try {
-          await user.send(
-            `Welcome to **${guild.name}**!\n\n` +
-            `You're verified with Hyprlane, but this server requires a linked phone number.\n\n` +
-            `Please link your phone at <https://hyprlane.qd.je/dashboard/account/> to gain access.`
-          );
-        } catch {
-          if (config.log_channel_id) {
-            try {
-              const ch = await guild.channels.fetch(config.log_channel_id);
-              if (ch?.isTextBased()) {
-                await ch.send(`<@${user.id}> is verified but needs to link a phone number.`);
-              }
-            } catch {}
-          }
-        }
-        return;
-      }
-
       // All gates passed — assign role
       const roleId = config.verified_role_id;
       if (roleId) {

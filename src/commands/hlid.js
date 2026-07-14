@@ -26,7 +26,6 @@ export async function execute(interaction) {
         { name: 'User', value: `<@${interaction.user.id}>`, inline: true },
         { name: 'Verified', value: card.verified_at ? `Yes — <t:${Math.floor(new Date(card.verified_at).getTime() / 1000)}:R>` : 'No', inline: true },
         { name: 'Servers', value: String(card.verified_guild_count ?? 0), inline: true },
-        { name: 'Phone Linked', value: card.phone_linked ? 'Yes' : 'No', inline: true },
       ],
       color: 0xf59e0b,
     }],
