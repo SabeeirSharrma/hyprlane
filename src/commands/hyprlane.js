@@ -17,6 +17,9 @@ export const data = new SlashCommandBuilder()
       .addRoleOption(opt =>
         opt.setName('mod_role').setDescription('Role allowed to use mod commands')
       )
+      .addChannelOption(opt =>
+        opt.setName('verification_channel').setDescription('Channel visible to unverified users with verification instructions')
+      )
   )
   .addSubcommand(sub =>
     sub.setName('status').setDescription('Show current config and verification stats')
@@ -36,6 +39,11 @@ export const data = new SlashCommandBuilder()
       .addUserOption(opt =>
         opt.setName('user').setDescription('User to revoke').setRequired(true)
       )
+  )
+  .addSubcommand(sub =>
+    sub
+      .setName('sync')
+      .setDescription('Auto-verify all existing members who are already verified with Hyprlane')
   )
   .addSubcommand(sub =>
     sub
@@ -78,17 +86,27 @@ export async function execute(interaction) {
     const verifiedRole = interaction.options.getRole('verified_role');
     const logChannel = interaction.options.getChannel('log_channel');
     const modRole = interaction.options.getRole('mod_role');
+    const verificationChannel = interaction.options.getChannel('verification_channel');
 
-    await api.updateGuildConfig(guildId, {
+    const configUpdate = {
       verified_role_id: verifiedRole.id,
-      ...(logChannel ? { log_channel_id: logChannel.id } : {}),
-      ...(modRole ? { mod_role_id: modRole.id } : {}),
-    });
+    };
+    if (logChannel) configUpdate.log_channel_id = logChannel.id;
+    if (modRole) configUpdate.mod_role_id = modRole.id;
+    if (verificationChannel) configUpdate.verification_channel_id = verificationChannel.id;
+
+    await api.updateGuildConfig(guildId, configUpdate);
+
+    // If verification channel is set, set up permissions and post instructions
+    if (verificationChannel) {
+      await setupVerificationChannel(interaction.guild, verificationChannel.id, verifiedRole.id);
+    }
 
     return interaction.reply({
       content: `Hyprlane configured.\nVerified role: <@&${verifiedRole.id}>` +
         (logChannel ? `\nLog channel: <#${logChannel.id}>` : '') +
-        (modRole ? `\nMod role: <@&${modRole.id}>` : ''),
+        (modRole ? `\nMod role: <@&${modRole.id}>` : '') +
+        (verificationChannel ? `\nVerification channel: <#${verificationChannel.id}>` : ''),
       ephemeral: true,
     });
   }
@@ -103,6 +121,7 @@ export async function execute(interaction) {
         fields: [
           { name: 'Verified Role', value: config.verified_role_id ? `<@&${config.verified_role_id}>` : 'Not set', inline: true },
           { name: 'Log Channel', value: config.log_channel_id ? `<#${config.log_channel_id}>` : 'None', inline: true },
+          { name: 'Verification Channel', value: config.verification_channel_id ? `<#${config.verification_channel_id}>` : 'None', inline: true },
           { name: 'Enrolled Features', value: (config.enrolled_features || []).join(', ') || 'None', inline: true },
           { name: 'Total Verified', value: String(stats.verified_count ?? 0), inline: true },
         ],
@@ -134,10 +153,74 @@ export async function execute(interaction) {
     const target = interaction.options.getUser('user');
     await api.revokeMember(guildId, target.id);
 
+    // Remove role if they have it
+    try {
+      const member = await interaction.guild.members.fetch(target.id);
+      const config = await api.getGuildConfig(guildId);
+      if (config.verified_role_id) {
+        await member.roles.remove(config.verified_role_id);
+      }
+    } catch {}
+
     return interaction.reply({
       content: `Revoked verified role for **${target.tag}** in this server (global record untouched).`,
       ephemeral: true,
     });
+  }
+
+  if (sub === 'sync') {
+    await interaction.deferReply({ ephemeral: true });
+
+    const config = await api.getGuildConfig(guildId);
+    const roleId = config.verified_role_id;
+    if (!roleId) {
+      return interaction.editReply('No verified role configured. Run `/hyprlane setup` first.');
+    }
+
+    let checked = 0;
+    let assigned = 0;
+    let alreadyHad = 0;
+
+    // Fetch all members (paginated)
+    let lastMemberId = undefined;
+    let done = false;
+
+    while (!done) {
+      const options = { limit: 1000 };
+      if (lastMemberId) options.after = lastMemberId;
+
+      const members = await interaction.guild.members.fetch(options);
+      if (members.size === 0) break;
+
+      for (const [id, member] of members) {
+        if (member.user.bot) continue;
+        checked++;
+
+        try {
+          const status = await api.getMemberStatus(guildId, id);
+          if (status.verified) {
+            if (!member.roles.cache.has(roleId)) {
+              await member.roles.add(roleId);
+              assigned++;
+            } else {
+              alreadyHad++;
+            }
+          }
+        } catch (err) {
+          // Skip on error
+        }
+      }
+
+      lastMemberId = members.lastKey();
+      if (members.size < 1000) done = true;
+    }
+
+    return interaction.editReply(
+      `Sync complete.\n` +
+      `Checked: ${checked} members\n` +
+      `Newly assigned: ${assigned}\n` +
+      `Already had role: ${alreadyHad}`
+    );
   }
 
   if (sub === 'feature') {
@@ -178,5 +261,45 @@ export async function execute(interaction) {
       content: `Feature \`${featureId}\` ${action === 'enable' ? 'enabled' : 'disabled'} for this server.`,
       ephemeral: true,
     });
+  }
+}
+
+async function setupVerificationChannel(guild, channelId, verifiedRoleId) {
+  try {
+    const channel = await guild.channels.fetch(channelId);
+    if (!channel) return;
+
+    // Set permissions: @everyone can view but not send, verified role can view
+    await channel.permissionOverwrites.edit(guild.id, {
+      ViewChannel: true,
+      SendMessages: false,
+      ReadMessageHistory: true,
+    });
+
+    // Hide verification channel from verified users (they don't need to see it)
+    await channel.permissionOverwrites.edit(verifiedRoleId, {
+      ViewChannel: false,
+    });
+
+    // Post verification instructions
+    if (channel.isTextBased()) {
+      await channel.send({
+        embeds: [{
+          title: 'Welcome to Hyprlane Verification',
+          description: 'To gain access to this server, you need to verify your identity with Hyprlane.\n\n' +
+            '**How to verify:**\n' +
+            '1. The bot will DM you a verification link\n' +
+            '2. Click the link and log in with Discord\n' +
+            '3. Complete the Turnstile challenge\n' +
+            '4. Your role will be assigned automatically\n\n' +
+            '**Already verified?** You already have access — welcome!\n\n' +
+            'If you have DMs closed, ask a moderator for help.',
+          color: 0xE8A93F,
+          footer: { text: 'Hyprlane — Cross-server verification' },
+        }],
+      });
+    }
+  } catch (err) {
+    console.error('[SETUP] Failed to configure verification channel:', err.message);
   }
 }
