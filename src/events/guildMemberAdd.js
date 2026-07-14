@@ -3,6 +3,19 @@ import { api } from '../api.js';
 export const name = 'guildMemberAdd';
 export const once = false;
 
+// Raid protection: track joins per guild for rate monitoring
+const joinTracker = new Map(); // guildId -> [{ timestamp }]
+
+function cleanupJoinTracker() {
+  const now = Date.now();
+  for (const [guildId, joins] of joinTracker) {
+    const recent = joins.filter(j => now - j.timestamp < 60000); // 1 min window
+    if (recent.length === 0) joinTracker.delete(guildId);
+    else joinTracker.set(guildId, recent);
+  }
+}
+setInterval(cleanupJoinTracker, 30000);
+
 export async function execute(member) {
   if (member.user.bot) return;
 
@@ -12,7 +25,48 @@ export async function execute(member) {
     const status = await api.getMemberStatus(guild.id, user.id);
     const config = await api.getGuildConfig(guild.id);
     const features = config.enrolled_features || [];
-    const modReviewChannelId = config.feature_config?.mod_review?.channel_id;
+    const featureConfig = config.feature_config || {};
+    const modReviewChannelId = featureConfig.mod_review?.channel_id;
+
+    // Raid protection: track joins and check for spikes
+    if (features.includes('raid_protection')) {
+      const now = Date.now();
+      if (!joinTracker.has(guild.id)) joinTracker.set(guild.id, []);
+      const joins = joinTracker.get(guild.id);
+      joins.push({ timestamp: now });
+
+      const windowMs = (featureConfig.raid_protection?.window_seconds || 60) * 1000;
+      const threshold = featureConfig.raid_protection?.threshold || 10;
+      const recentJoins = joins.filter(j => now - j.timestamp < windowMs);
+
+      if (recentJoins.length >= threshold) {
+        // Raid detected — alert mods, skip auto-role
+        console.log(`[RAID] Detected ${recentJoins.length} joins in ${guild.name} — locking down`);
+        if (config.log_channel_id) {
+          try {
+            const ch = await guild.channels.fetch(config.log_channel_id);
+            if (ch?.isTextBased()) {
+              await ch.send(
+                `⚠️ **Raid detected** — ${recentJoins.length} members joined in the last ${windowMs / 1000}s.\n` +
+                `Auto-role assignment is paused. Moderators please review.`
+              );
+            }
+          } catch {}
+        }
+        // Skip auto-role for this join — they'll need manual review
+        return;
+      }
+    }
+
+    // booster_bypass: skip verification for server boosters
+    if (features.includes('booster_bypass') && member.premiumSince) {
+      const roleId = config.verified_role_id;
+      if (roleId) {
+        await member.roles.add(roleId);
+        console.log(`[JOIN] ${user.tag} auto-verified (booster bypass) in ${guild.name}`);
+      }
+      return;
+    }
 
     if (status.verified) {
       // require_challenge: re-run verification even for already-verified users
@@ -25,7 +79,6 @@ export async function execute(member) {
             `<${link.url}>`
           );
         } catch {
-          // DMs closed — try log channel fallback
           if (config.log_channel_id) {
             try {
               const ch = await guild.channels.fetch(config.log_channel_id);

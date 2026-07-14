@@ -67,7 +67,15 @@ export const data = new SlashCommandBuilder()
           .setRequired(true)
           .addChoices(
             { name: 'require_challenge', value: 'require_challenge' },
-            { name: 'mod_review', value: 'mod_review' }
+            { name: 'mod_review', value: 'mod_review' },
+            { name: 'booster_bypass', value: 'booster_bypass' },
+            { name: 'raid_protection', value: 'raid_protection' },
+            { name: 'audit_export', value: 'audit_export' },
+            { name: 'custom_success_page', value: 'custom_success_page' },
+            { name: 'custom_timeout', value: 'custom_timeout' },
+            { name: 'vanity_url', value: 'vanity_url' },
+            { name: 'config_duplicate', value: 'config_duplicate' },
+            { name: 'custom_verification_domain', value: 'custom_verification_domain' }
           )
       )
       .addChannelOption(opt =>
